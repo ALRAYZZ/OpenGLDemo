@@ -7,8 +7,13 @@
 #include <sstream>
 #include <fstream>
 #include <string>
+#include <geometry.h>
+#include <model.h>
 
+constexpr int width = 800;
+constexpr int height = 800;
 
+// BGRA order
 constexpr TGAColor white = { 255, 255, 255, 255 };
 constexpr TGAColor green = { 0, 255, 0, 255 };
 constexpr TGAColor red = { 0, 0, 255, 255 };
@@ -30,21 +35,20 @@ void line(int ax, int ay, int bx, int by, TGAImage& frameBuffer, TGAColor color)
 		std::swap(ay, by);
 	}
 
-	float y = ay;
-	float ierror = 0;
+	int y = ay;
+	int ierror = 0;
 	for (int x = ax; x <= bx; x++)
 	{
-		float t = (x - ax) / static_cast<float>(bx - ax);
-		int y = std::round(ay + (by - ay) * t);
 		if (steep)
 		{
-			frameBuffer.set(y, x, color); // if steep, we swap x and y
+			frameBuffer.set(y, x, color);
 		}
 		else
 		{
 			frameBuffer.set(x, y, color);
 		}
-		ierror += 2 * std::abs(by - ay); // calculate the error based on the slope
+
+		ierror += 2 * std::abs(by - ay);
 		if (ierror > bx - ax)
 		{
 			y += by > ay ? 1 : -1;
@@ -53,90 +57,59 @@ void line(int ax, int ay, int bx, int by, TGAImage& frameBuffer, TGAColor color)
 	}
 }
 
-struct Vec3
+// Project 3D coordinates to 2D screen space
+std::tuple<int, int> project(const vec3& v)
 {
-	float x, y, z;
-};
-
-bool load_obj(const std::string& filename, std::vector<Vec3>& vertices, std::vector<std::vector<int>>& faces)
-{
-	std::ifstream file(filename);
-	if (!file.is_open())
-	{
-		std::cerr << "Error opening .obj file: " << filename << std::endl;
-		return false;
-	}
-
-	std::string line;
-	while (std::getline(file, line))
-	{
-		std::istringstream iss(line); // String stream parses the lines and uses whitespace to separate words
-		std::string type;
-		iss >> type; // Extracting the first word to determine the type of line
-
-		if (type == "v") // vertex
-		{
-			Vec3 vertex;
-			iss >> vertex.x >> vertex.y >> vertex.z; // Populating the struct Vec3
-			vertices.push_back(vertex);
-		}
-		else if (type == "f") // face
-		{
-			std::vector<int> face;
-			std::string vertex;
-			while (iss >> vertex)
-			{
-				// Parse the vertex index (before first slash)
-				int vertexIndex = std::stoi(vertex.substr(0, vertex.find('/'))) - 1; // OBJ indices are 1-based, convert to 0-based
-				face.push_back(vertexIndex);
-			}
-			if (face.size() >= 3) // Only process faces with at least 3 vertices
-			{
-				faces.push_back(face);
-			}
-		}
-	}
-	file.close();
-	return true;
+	return { (v.x + 1) * width / 2,
+			 (v.y + 1)* height / 2 };
 }
 
 int main(int argc, char** argv)
 {
 	auto start = std::chrono::high_resolution_clock::now();
 
-	constexpr int width = 64;
-	constexpr int height = 64;
-	TGAImage frameBuffer(width, height, TGAImage::RGB);
-
-	// Load the OBJ file
-	std::vector<Vec3> vertices;
-
-
-	int ax = 7, ay = 3;
-	int bx = 12, by = 37;
-	int cx = 62, cy = 53;
-
-	std::srand(std::time({}));
-	for (int i = 0; i < (1 << 24); i++)
+	if (argc != 2)
 	{
-		int ax = rand() % width, ay = rand() % height;
-		int bx = rand() % width, by = rand() % height;
-		line(ax, ay, bx, by, frameBuffer, {
-			static_cast<std::uint8_t>(rand() % 255),
-			static_cast<std::uint8_t>(rand() % 255),
-			static_cast<std::uint8_t>(rand() % 255),
-			static_cast<std::uint8_t>(rand() % 255),
-			static_cast<std::uint8_t>(rand() % 255) 
-		});
+		std::cerr << "Usage: " << argv[0] << " obj/model.obj" << std::endl;
+		return EXIT_FAILURE;
 	}
 
+	const std::string filename = argv[1];
+	Model model(filename);
+
+	if (model.nverts() == 0 || model.nfaces() == 0) // Check if model is empty/loaded correctly
+	{
+		std::cerr << "Error: Model failed to load or is empty.\n";
+		return EXIT_FAILURE;
+	}
+
+	TGAImage frameBuffer(width, height, TGAImage::RGB);
+
+	// Draw all triangles edges from faces
+	for (int i = 0; i < model.nfaces(); i++)
+	{
+		auto [ax, ay] = project(model.vert(i, 0));
+		auto [bx, by] = project(model.vert(i, 1));
+		auto [cx, cy] = project(model.vert(i, 2));
+
+		line(ax, ay, bx, by, frameBuffer, red);
+		line(bx, by, cx, cy, frameBuffer, red);
+		line(cx, cy, ax, ay, frameBuffer, red);
+	}
+
+	// Draw vertices as white dots
+	for (int i = 0; i < model.nverts(); i++)
+	{
+		const vec3& vertex = model.vert(i);
+		auto [x, y] = project(vertex);
+		frameBuffer.set(x, y, white);
+	}
+
+	frameBuffer.write_tga_file("frameBufferOutput.tga");
+
 	auto end = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double> elapsed = end - start;
+	auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+	std::cout << "Rendered in " << elapsed.count() << " ms\n";
 
-	std::cout << "Execution time: " << elapsed.count() << " seconds" << std::endl;
-
-
-	frameBuffer.write_tga_file("frameBuffer.tga");
-
-	return 0;
+	return EXIT_SUCCESS;
 }

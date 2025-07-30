@@ -14,7 +14,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 file(GLOB SOURCES "src/*.cpp" "src/*.h")
 
 # Create executable
-add_executable(OpenGLDemo ${SOURCES} "lib/tgaimage.cpp")
+add_executable(OpenGLDemo ${SOURCES} "lib/tgaimage.cpp" "include/model.h" "src/model.cpp")
 
 # Set the output directory
 set_target_properties(OpenGLDemo PROPERTIES
