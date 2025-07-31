@@ -1,4 +1,5 @@
 #include <tgaimage.h>
+#include <numbers>
 #include <cstdlib>
 #include <ctime>
 #include <chrono>
@@ -57,68 +58,135 @@ void line(int ax, int ay, int bx, int by, TGAImage& frameBuffer, TGAColor color)
 		}
 	}
 }
-void triangle(int ax, int ay, int bx, int by, int cx, int cy, TGAImage& frameBuffer, TGAColor color)
-{
-	// We need vertices sorted from top to bottom
-	// This ensures our scanline algorithm processes triangles correctly
-    if (ay > by) std::swap(ax, bx), std::swap(ay, by);
-    if (ay > cy) std::swap(ax, cx), std::swap(ay, cy);
-    if (by > cy) std::swap(bx, cx), std::swap(by, cy);
 
-    // Draw triangle edges (wireframe)
-    line(ax, ay, bx, by, frameBuffer, color);
-    line(bx, by, cx, cy, frameBuffer, color);
-    line(cx, cy, ax, ay, frameBuffer, color);
+// Calculate signed area of triangle using determinant method
+double signedTriangleArea(int ax, int ay, int bx, int by, int cx, int cy)
+{
+	return .5 * ((by - ay) * (bx + ax) + (cy - by) * (cx + bx) + (ay - cy) * (ax + cx));
+
+}
+
+void triangle(int ax, int ay, int az, int bx, int by, int bz, int cx, int cy, int cz, TGAImage& zBuffer, TGAImage& frameBuffer, TGAColor color, const vec3& v0, const vec3& v1, const vec3& v2)
+{
+	// Backface culling: Calculating triangle normal
+	vec3 edge1 = v1 - v0;
+	vec3 edge2 = v2 - v0;
+	vec3 normal = cross(edge1, edge2);
+	
+	// Camera direction assuming is at origin looking down the negative Z-axis
+	vec3 cameraDir = { 0, 0, -1 };
+
+	// If dot product is negative, triangle is facing away from camera
+	// Based on the angle between the triangle normal and camera direction we can determine visibility
+	if (normal * cameraDir >= 0)
+	{
+		return; // Backface culling: Skip triangle if facing away from camera
+	}
+
+	// Use bounding box approach to limit the area we need to scan
+	int bbminx = std::max(0, std::min({ ax, bx, cx }));
+	int bbminy = std::max(0, std::min({ ay, by, cy }));
+	int bbmaxx = std::min(width - 1, std::max({ ax, bx, cx }));
+	int bbmaxy = std::min(height - 1, std::max({ ay, by, cy }));
+
+	// Calculate total triange area for barycentric coordinates
+	double totalArea = signedTriangleArea(ax, ay, bx, by, cx, cy);
+	if (std::abs(totalArea) < 1e-6) return; // Degenerate triangle, skip rendering
+
+
+	for (int x = bbminx; x <= bbmaxx; x++)
+	{
+		for (int y = bbminy; y <= bbmaxy; y++)
+		{
+			// Calculate barycentric coordinates
+			double alpha = signedTriangleArea(x, y, bx, by, cx, cy) / totalArea;
+			double beta = signedTriangleArea(ax, ay, x, y, cx, cy) / totalArea;
+			double gamma = signedTriangleArea(ax, ay, bx, by, x, y) / totalArea;
+
+			// Check if pixel is inside triangle
+			if (alpha < 0 || beta < 0 || gamma < 0) continue;
+
+			// Interpolate Z-coordinate using barycentric coordinates
+			double z = alpha * az + beta * bz + gamma * cz;
+
+			// Z-buffer test (assuming higer Z values are closer to camera)
+			TGAColor currentZ = zBuffer.get(x, y);
+			unsigned char zValue = static_cast<unsigned char>(std::clamp(z, 0.0, 255.0));
+
+			if (zValue > currentZ[0]) // Closer to camera
+			{
+				zBuffer.set(x, y, { zValue, zValue, zValue, 255 });
+				frameBuffer.set(x, y, color);
+			}
+		}
+	}
 
 	// Scanline fill algorithm
 	// Process each horizontal line from top vertex to bottom vertex
 	// For each horizontal line, find intersections with triangle edges
-    for (int y = ay; y <= cy; y++)
-    {
-		// Collect intersections of the scanline with triangle edges
-        std::vector<int> intersections;
-        
-		// Define edges of the triangle
-        int edges[3][4] = {
-			{ax, ay, bx, by},
-			{bx, by, cx, cy},
-			{cx, cy, ax, ay}
-		};
-        
-        for (int i = 0; i < 3; i++)
-        {
-            int x1 = edges[i][0], y1 = edges[i][1];
-            int x2 = edges[i][2], y2 = edges[i][3];
-            
-            // Check if scanline intersects this edge (avoid horizontal edges)
-            if (y1 != y2 && ((y1 < y && y2 >= y) || (y2 < y && y1 >= y)))
-            {
-                int xIntersect = x1 + (y - y1) * (x2 - x1) / (y2 - y1);
-                intersections.push_back(xIntersect);
-            }
-        }
-        
-        // Sort intersections and fill between pairs
-        if (intersections.size() >= 2)
-        {
-            std::sort(intersections.begin(), intersections.end());
-            int xMin = intersections[0];
-            int xMax = intersections[intersections.size() - 1];
-            
-            // Fill the scanline within screen bounds
-            for (int x = std::max(0, xMin); x <= std::min(width - 1, xMax); x++)
-            {
-                frameBuffer.set(x, y, color);
-            }
-        }
-    }
+  //  for (int y = ay; y <= cy; y++)
+  //  {
+		//// Collect intersections of the scanline with triangle edges
+  //      std::vector<int> intersections;
+  //      
+		//// Define edges of the triangle
+  //      int edges[3][4] = {
+		//	{ax, ay, bx, by},
+		//	{bx, by, cx, cy},
+		//	{cx, cy, ax, ay}
+		//};
+  //      
+  //      for (int i = 0; i < 3; i++)
+  //      {
+  //          int x1 = edges[i][0], y1 = edges[i][1];
+  //          int x2 = edges[i][2], y2 = edges[i][3];
+  //          
+  //          // Check if scanline intersects this edge (avoid horizontal edges)
+  //          if (y1 != y2 && ((y1 < y && y2 >= y) || (y2 < y && y1 >= y)))
+  //          {
+  //              int xIntersect = x1 + (y - y1) * (x2 - x1) / (y2 - y1);
+  //              intersections.push_back(xIntersect);
+  //          }
+  //      }
+  //      
+  //      // Sort intersections and fill between pairs
+  //      if (intersections.size() >= 2)
+  //      {
+  //          std::sort(intersections.begin(), intersections.end());
+  //          int xMin = intersections[0];
+  //          int xMax = intersections[intersections.size() - 1];
+  //          
+  //          // Fill the scanline within screen bounds
+  //          for (int x = std::max(0, xMin); x <= std::min(width - 1, xMax); x++)
+  //          {
+  //              frameBuffer.set(x, y, color);
+  //          }
+  //      }
+  //  }
+}
+vec3 rot(vec3 vector)
+{
+	constexpr double angle = std::numbers::pi / 6.0; // 30 degrees
+	double cosAngle = std::cos(angle);
+	double singAngle = std::sin(angle);
+
+	mat<3, 3> Ry;
+	Ry[0][0] = cosAngle; Ry[0][1] = 0; Ry[0][2] = singAngle;
+	Ry[1][0] = 0;        Ry[1][1] = 1; Ry[1][2] = 0;
+	Ry[2][0] = -singAngle; Ry[2][1] = 0; Ry[2][2] = cosAngle;
+
+
+	return Ry * vector; // Rotate around Y-axis
 }
 
 // Project 3D coordinates to 2D screen space orthographic projection
-std::tuple<int, int> project(const vec3& v)
+std::tuple<int, int, int> project(const vec3& v)
 {
-	return { (v.x + 1) * width / 2,
-			 (v.y + 1)* height / 2 };
+	return {
+		static_cast<int>((v.x + 1) * width / 2),
+		static_cast<int>((v.y + 1) * height / 2),
+		static_cast<int>((v.z + 1) * 255.0 / 2)
+	};
 }
 
 // Check if the model is loaded correctly
@@ -162,9 +230,9 @@ int main(int argc, char** argv)
 		// Draw all triangles edges from faces
 		for (int i = 0; i < model.nfaces(); i++)
 		{
-			auto [ax, ay] = project(model.vert(i, 0));
-			auto [bx, by] = project(model.vert(i, 1));
-			auto [cx, cy] = project(model.vert(i, 2));
+			auto [ax, ay, az] = project(model.vert(i, 0));
+			auto [bx, by, bz] = project(model.vert(i, 1));
+			auto [cx, cy, cz] = project(model.vert(i, 2));
 
 			line(ax, ay, bx, by, frameBuffer, red);
 			line(bx, by, cx, cy, frameBuffer, red);
@@ -175,7 +243,7 @@ int main(int argc, char** argv)
 		for (int i = 0; i < model.nverts(); i++)
 		{
 			const vec3& vertex = model.vert(i);
-			auto [x, y] = project(vertex);
+			auto [x, y, z] = project(vertex);
 			frameBuffer.set(x, y, white);
 		}
 
@@ -204,17 +272,26 @@ int main(int argc, char** argv)
 		}
 
 		TGAImage frameBuffer(width, height, TGAImage::RGB);
+		TGAImage zBuffer(width, height, TGAImage::GRAYSCALE);
 
-		for (int i = 0; i < model.nfaces(); i++)
+		for (int i = 0; i < model.nfaces(); i++) // Iterating through all faces
 		{
-			auto [ax, ay] = project(model.vert(i, 0));
-			auto [bx, by] = project(model.vert(i, 1));
-			auto [cx, cy] = project(model.vert(i, 2));
-			TGAColor randomColor(rand() % 255, rand() % 255, rand() % 255, 255);
-			triangle(ax, ay, bx, by, cx, cy, frameBuffer, randomColor);
+			// Each face is a triangle defined by 3 vertices
+			vec3 v0 = model.vert(i, 0);
+			vec3 v1 = model.vert(i, 1);
+			vec3 v2 = model.vert(i, 2);
+
+			// Single call to project each vertex
+			auto [ax, ay, az] = project(rot(model.vert(i, 0)));
+			auto [bx, by, bz] = project(rot(model.vert(i, 1)));
+			auto [cx, cy, cz] = project(rot(model.vert(i, 2)));
+
+			TGAColor randomColor = { rand() % 256, rand() % 256, rand() % 256, 255 };
+			triangle(ax, ay, az, bx, by, bz, cx, cy, cz, zBuffer, frameBuffer, randomColor, v0, v1, v2);
 		}
 		frameBuffer.write_tga_file("triangleOutput.tga");
-		std::cout << "Triangle drawn.\n";
+		zBuffer.write_tga_file("zBufferOutput.tga");
+		std::cout << "Image drawn.\n";
 
 		return EXIT_SUCCESS;
 
